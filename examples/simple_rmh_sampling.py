@@ -11,6 +11,9 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.stats import multivariate_normal
 
+# print which devide jax is using
+print("JAX is using device:", jax.default_backend())
+
 import blackjax
 import blackjax.smc.resampling as resampling
 from blackjax.smc import extend_params
