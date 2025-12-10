@@ -389,6 +389,31 @@ def save_mcmc_to_hdf5(
     print(f"\n✓ Compatible with existing h5_to_rmf3 converter!")
     print(f"{'='*70}\n")
 
+def probe_acceptance(log_prob, system, state, step_trans, step_quat, step_flex, n=10):
+    """Quickly probe proposal scales and expected acceptance."""
+    # Build per-DOF step sizes
+    step_sizes = []
+    for _ in range(system.n_rb):
+        step_sizes.extend([step_trans] * 3 + [step_quat] * 4)
+    step_sizes.extend([step_flex] * system.n_flex * 3)
+    step_sizes = np.array(step_sizes, dtype=np.float32)
+
+    state_np = np.array(state, dtype=np.float32)
+    lp0 = float(log_prob(state_np))
+
+    print(f"\nProbe proposals (n={n}), lp0={lp0:.3f}")
+    acc_probs = []
+    rng = np.random.default_rng(0)
+    for i in range(n):
+        prop = state_np + rng.normal(scale=step_sizes)
+        lp = float(log_prob(prop))
+        acc_prob = min(1.0, np.exp(lp - lp0))
+        acc_probs.append(acc_prob)
+        print(f"  {i+1:02d}: lp={lp:.3f}, Δ={lp - lp0:+.3f}, acc≈{acc_prob:.3f}")
+
+    print(f"  median acc≈{np.median(acc_probs):.3f}, "
+          f"min≈{np.min(acc_probs):.3e}, max≈{np.max(acc_probs):.3f}\n")
+    return acc_probs
 
 # ============================================================
 # Example Usage
@@ -455,6 +480,16 @@ if __name__ == "__main__":
     kernel = setup_mcmc(log_prob, system.n_rb, system.n_flex, 
                        step_trans=step_trans, step_quat=step_quat, step_flex=step_flex)
     
+    probe_acceptance(
+        log_prob,
+        system,
+        init_state,
+        step_trans=step_trans,
+        step_quat=step_quat,
+        step_flex=step_flex,
+        n=10
+    )
+
     results = run_mcmc(
         random.PRNGKey(42), kernel, system, init_state,
         n_steps=50_000, save_every=50, print_every=2000
