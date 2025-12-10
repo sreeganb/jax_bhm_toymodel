@@ -46,7 +46,7 @@ def harmonic_score(positions, restraints, k=0.5):
     distances = jnp.linalg.norm(positions[i_idx] - positions[j_idx], axis=1)
     return k * jnp.sum((distances - d0) ** 2)
 
-def excluded_volume(positions, radii, k=1.0):
+def excluded_volume(positions, radii, k=100.0):
     """Soft excluded volume: E = k * sum(max(0, overlap)^2)."""
     n = positions.shape[0]
     energy = 0.0
@@ -352,17 +352,17 @@ if __name__ == "__main__":
     # Define two rigid bodies with different copy numbers
     rb1 = RigidBody(
         ref_coords=jnp.array([[0., 0., 0.], [2., 0., 0.], [1., 1.73, 0.]]),
-        radii=jnp.array([1.0, 1.0, 1.0]),
+        radii=jnp.array([1.5, 1.5, 1.5]),
         copy_number=1, name="triangle"
     )
     rb2 = RigidBody(
-        ref_coords=jnp.array([[0., 0., 0.], [2., 0., 0.], [2., 2., 0.], [0., 2., 0.]]),
-        radii=jnp.array([1.2, 1.2, 1.2, 1.2]),  # Different radii
+        ref_coords=jnp.array([[0., 0., 0.], [6., 0., 0.], [6., 6., 0.], [0., 6., 0.]]),
+        radii=jnp.array([4.0, 4.0, 4.0, 4.0]),  # Different radii
         copy_number=2, name="square"
     )
     
     # Flexible linker particles
-    flex = [Particle(jnp.array([5., 0., 0.]), radius=0.8, name=f"flex_{i}") for i in range(3)]
+    flex = [Particle(jnp.array([5., 0., 0.]), radius=0.5, name=f"flex_{i}") for i in range(3)]
     
     # Restraints: [particle_i, particle_j, ideal_distance]
     restraints = jnp.array([
@@ -387,7 +387,7 @@ if __name__ == "__main__":
     
     results = run_mcmc(
         random.PRNGKey(42), kernel, system, init_state,
-        n_steps=20_000, save_every=50, print_every=2000
+        n_steps=50_000, save_every=50, print_every=2000
     )
     
     # Save using standard format (compatible with h5_to_rmf3)
