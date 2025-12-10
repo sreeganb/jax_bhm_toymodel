@@ -282,7 +282,6 @@ def save_smc_to_hdf5(
 # ============================================================
 # Run the SMC
 # ============================================================
-
 if __name__ == "__main__":
     # 1. System Setup
     n_particles = 11
@@ -302,11 +301,20 @@ if __name__ == "__main__":
     def log_likelihood(coords_flat):
         return log_prob_fn(coords_flat, radii, indices)
 
-    # 3. Define RMH Kernel Factory for SMC
-    # SMC needs a function that creates a kernel given a logdensity function
-    def rmh_kernel_factory(logdensity_fn, step_size):
-        proposal_distribution = blackjax.mcmc.random_walk.normal(step_size)
-        return blackjax.rmh(logdensity_fn, proposal_distribution)
+    # 3. Define RMH Kernel for SMC
+    # Create the proposal distribution with your step size
+    step_size = jnp.ones(n_particles * 3) * 2.5
+    proposal_distribution = blackjax.mcmc.random_walk.normal(step_size)
+    
+    # Build the RMH kernel factory - this returns a function that takes logdensity
+    def rmh_build_kernel():
+        return blackjax.rmh.build_kernel()
+    
+    # RMH init function
+    rmh_init = blackjax.rmh.init
+    
+    # Parameters for RMH - the proposal distribution
+    rmh_parameters = {"proposal_distribution": proposal_distribution}
 
     # 4. Initialize SMC Population
     num_smc_particles = 1000  # Number of parallel chains/replicas
@@ -322,18 +330,15 @@ if __name__ == "__main__":
     )
 
     # 5. Setup Tempered SMC Algorithm
-    step_size = 2.5  # RMH step size
-    rmh_parameters = dict(step_size=step_size)
-
     tempered = blackjax.adaptive_tempered_smc(
         prior_log_prob,
         log_likelihood,
-        rmh_kernel_factory,     # Use RMH instead of HMC
-        blackjax.rmh.init,      # Use RMH init
+        rmh_build_kernel(),        # Returns the kernel function
+        rmh_init,                   # The init function
         extend_params(rmh_parameters),
         resampling.systematic,
-        target_ess=0.5,         # Resample when effective sample size drops below 50%
-        num_mcmc_steps=10       # Number of RMH steps to take between tempering steps
+        target_ess=0.5,             # Resample when effective sample size drops below 50%
+        num_mcmc_steps=10           # Number of RMH steps to take between tempering steps
     )
 
     # Initialize the SMC state
