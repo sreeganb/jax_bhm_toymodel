@@ -382,7 +382,7 @@ if __name__ == "__main__":
     )
     
     # Setup and run
-    log_prob = make_log_prob(system, k_harmonic=0.5, k_exvol=1.0)
+    log_prob = make_log_prob(system, k_harmonic=0.5, k_exvol=100.0)
     kernel = setup_mcmc(log_prob, system.n_rb, system.n_flex)
     
     results = run_mcmc(
