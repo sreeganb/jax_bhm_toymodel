@@ -6,7 +6,7 @@ matplotlib.use('Agg')  # Non-interactive backend
 from pathlib import Path
 
 
-def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
+def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures", d0=4.5):
     """
     Generate MCMC diagnostic plots from HDF5 file.
     
@@ -64,12 +64,12 @@ def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
     print("Generating trace plot...")
     fig, ax = plt.subplots(figsize=(12, 4))
     ax.plot(log_probs, linewidth=0.5, alpha=0.8)
-    ax.set_xlabel('Sample', fontsize=12)
-    ax.set_ylabel('Log Probability', fontsize=12)
-    ax.set_title('MCMC Trace: Log Probability', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Sample', fontsize=14)
+    ax.set_ylabel('Log Probability', fontsize=14)
+    ax.set_title('MCMC Trace: Log Probability', fontsize=16, fontweight='bold')
     ax.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig(output_path / "trace_plot.png", dpi=150)
+    plt.savefig(output_path / "trace_plot.png", dpi=250)
     plt.close()
     
     # ============================================================
@@ -78,14 +78,14 @@ def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
     print("Generating distance trace...")
     fig, ax = plt.subplots(figsize=(12, 4))
     ax.plot(distances, linewidth=0.5, alpha=0.8, color='C1')
-    ax.axhline(10.0, color='red', linestyle='--', linewidth=2, label='Target (d₀=10)')
-    ax.set_xlabel('Sample', fontsize=12)
-    ax.set_ylabel('Distance (Å)', fontsize=12)
-    ax.set_title('Particle Distance Over Time', fontsize=14, fontweight='bold')
+    ax.axhline(d0, color='red', linestyle='--', linewidth=2, label='Target (d₀=4.5)')
+    ax.set_xlabel('Sample', fontsize=14)
+    ax.set_ylabel('Distance (Å)', fontsize=14)
+    ax.set_title('Particle Distance Over Time', fontsize=16, fontweight='bold')
     ax.legend()
     ax.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig(output_path / "distance_trace.png", dpi=150)
+    plt.savefig(output_path / "distance_trace.png", dpi=250)
     plt.close()
     
     # ============================================================
@@ -94,16 +94,16 @@ def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
     print("Generating distance histogram...")
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.hist(distances, bins=50, alpha=0.7, edgecolor='black', density=True)
-    ax.axvline(10.0, color='red', linestyle='--', linewidth=2, label='Target (d₀=10)')
+    ax.axvline(d0, color='red', linestyle='--', linewidth=2, label='Target (d₀=4.5)')
     ax.axvline(np.mean(distances), color='blue', linestyle='--', linewidth=2, 
                label=f'Mean ({np.mean(distances):.2f})')
-    ax.set_xlabel('Distance (Å)', fontsize=12)
-    ax.set_ylabel('Density', fontsize=12)
-    ax.set_title('Distance Distribution', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Distance (Å)', fontsize=14)
+    ax.set_ylabel('Density', fontsize=14)
+    ax.set_title('Distance Distribution', fontsize=16, fontweight='bold')
     ax.legend()
     ax.grid(alpha=0.3, axis='y')
     plt.tight_layout()
-    plt.savefig(output_path / "distance_histogram.png", dpi=150)
+    plt.savefig(output_path / "distance_histogram.png", dpi=250)
     plt.close()
     
     # ============================================================
@@ -137,12 +137,12 @@ def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(autocorr[:max_lag], linewidth=1.5)
         ax.axhline(0, color='black', linestyle='--', linewidth=1)
-        ax.set_xlabel('Lag', fontsize=12)
-        ax.set_ylabel('Autocorrelation', fontsize=12)
-        ax.set_title('Log Probability Autocorrelation', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Lag', fontsize=14)
+        ax.set_ylabel('Autocorrelation', fontsize=14)
+        ax.set_title('Log Probability Autocorrelation', fontsize=16, fontweight='bold')
         ax.grid(alpha=0.3)
         plt.tight_layout()
-        plt.savefig(output_path / "autocorrelation.png", dpi=150)
+        plt.savefig(output_path / "autocorrelation.png", dpi=250)
         plt.close()
     
     # ============================================================
@@ -160,7 +160,7 @@ def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
     
     # Panel 2: Distance trace
     axes[0, 1].plot(distances, linewidth=0.5, alpha=0.8, color='C1')
-    axes[0, 1].axhline(10.0, color='red', linestyle='--', label='Target')
+    axes[0, 1].axhline(d0, color='red', linestyle='--', label='Target')
     axes[0, 1].set_xlabel('Sample')
     axes[0, 1].set_ylabel('Distance (Å)')
     axes[0, 1].set_title('Particle Distance')
@@ -169,7 +169,7 @@ def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
     
     # Panel 3: Distance histogram
     axes[1, 0].hist(distances, bins=40, alpha=0.7, edgecolor='black')
-    axes[1, 0].axvline(10.0, color='red', linestyle='--', linewidth=2, label='Target')
+    axes[1, 0].axvline(d0, color='red', linestyle='--', linewidth=2, label='Target')
     axes[1, 0].set_xlabel('Distance (Å)')
     axes[1, 0].set_ylabel('Count')
     axes[1, 0].set_title('Distance Distribution')
@@ -195,7 +195,7 @@ def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
       Max: {np.max(distances):.2f} Å
       Mean: {np.mean(distances):.2f} Å
       Std: {np.std(distances):.2f} Å
-      Target: 10.00 Å
+      Target: 4.5 Å
     
     Acceptance Rate: {acceptance_rate:.1%}
     """ if acceptance_rate else f"""
@@ -215,7 +215,7 @@ def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
       Max: {np.max(distances):.2f} Å
       Mean: {np.mean(distances):.2f} Å
       Std: {np.std(distances):.2f} Å
-      Target: 10.00 Å
+      Target: 4.5 Å
     """
     axes[1, 1].text(0.1, 0.5, stats_text, fontsize=11, family='monospace',
                      verticalalignment='center')
@@ -261,4 +261,4 @@ if __name__ == "__main__":
     hdf5_file = sys.argv[1]
     output_dir = sys.argv[2] if len(sys.argv) > 2 else "output_figures"
     
-    stats = plot_mcmc_diagnostics(hdf5_file, output_dir)
+    stats = plot_mcmc_diagnostics(hdf5_file, output_dir, d0=4.5)

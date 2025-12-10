@@ -20,7 +20,7 @@ def initialize_particle_positions(n_particles, box_size, seed=0):
     """Initialize random particle positions."""
     key = jax.random.PRNGKey(seed)
     positions = jax.random.uniform(key, (n_particles, 3), minval=0.0, maxval=box_size)
-    radii = jnp.ones((n_particles,)) * 1.0
+    radii = jnp.ones((n_particles,)) * 2.0
     indices = jnp.array([[0, 1]])  # Single pair for 2 particles
     return positions, radii, indices
 
@@ -30,7 +30,7 @@ def log_prob_fn(positions_flat, radii, indices):
     positions = positions_flat.reshape(-1, 3)
     
     # Compute energies
-    harmonic_energy = jax_harmonic_score(positions, indices, d0=10.0, k=0.5)
+    harmonic_energy = jax_harmonic_score(positions, indices, d0=4.5, k=0.5)
     exvol_energy = jax_excluded_volume(positions, radii, k=1.0)
     total_energy = harmonic_energy + exvol_energy
     
@@ -194,8 +194,8 @@ def save_mcmc_to_hdf5(
 
 if __name__ == "__main__":
     # Initialize system
-    n_particles = 3
-    box_size = 500.0
+    n_particles = 11
+    box_size = 110.0
     positions, radii, indices = initialize_particle_positions(n_particles, box_size, seed=42)
     
     print("Initial Positions:")
@@ -214,16 +214,16 @@ if __name__ == "__main__":
         return log_prob_fn(coords_flat, radii, indices)
     
     # Setup MCMC
-    step_size = 1.0  # Adjust for acceptance rate ~20-40%
+    step_size = 4.0  # Adjust for acceptance rate ~20-40%
     rmh_kernel = setup_coordinate_rmh(log_prob, step_size)
     
     # Run MCMC
     positions_out, log_probs_out, acc_rate = run_rmh_chain_with_logging(
-        key=random.PRNGKey(789),
+        key=random.PRNGKey(19827),
         kernel=rmh_kernel,
         initial_position=initial_position,
-        n_steps=50_000,
-        save_every=100,
+        n_steps=100_000,
+        save_every=75,
         print_every=1000,
         output_file="simple_mcmc_coords.h5"
     )
