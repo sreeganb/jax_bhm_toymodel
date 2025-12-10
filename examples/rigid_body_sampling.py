@@ -58,6 +58,65 @@ def excluded_volume(positions, radii, k=100.0):
     return energy
 
 # ============================================================
+# Diagnostic Functions
+# ============================================================
+
+def diagnose_initial_state(system, state):
+    """Diagnose problems with initial state."""
+    print("\n" + "="*70)
+    print("INITIAL STATE DIAGNOSTICS")
+    print("="*70)
+    
+    coords = system.state_to_coords(state)
+    
+    # Check pairwise distances
+    print("\nPairwise distances:")
+    n = coords.shape[0]
+    min_dist = float('inf')
+    max_overlap = 0.0
+    n_overlaps = 0
+    
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = float(jnp.linalg.norm(coords[i] - coords[j]))
+            min_dist = min(min_dist, d)
+            required_dist = float(system.radii[i] + system.radii[j])
+            overlap = required_dist - d
+            
+            if overlap > 0:
+                n_overlaps += 1
+                max_overlap = max(max_overlap, overlap)
+                if overlap > 1.0:  # Only print severe overlaps
+                    print(f"  Particle {i}-{j}: d={d:.2f}, required={required_dist:.2f}, "
+                          f"overlap={overlap:.2f}")
+    
+    print(f"\nSummary:")
+    print(f"  Minimum distance: {min_dist:.2f}")
+    print(f"  Number of overlaps: {n_overlaps}")
+    print(f"  Maximum overlap: {max_overlap:.2f}")
+    
+    # Compute energies
+    E_harm = harmonic_score(coords, system.restraints, k=0.5)
+    E_exvol = excluded_volume(coords, system.radii, k=100.0)
+    
+    print(f"\nEnergies:")
+    print(f"  Harmonic: {E_harm:.2f}")
+    print(f"  Excluded volume: {E_exvol:.2f}")
+    print(f"  Total: {E_harm + E_exvol:.2f}")
+    
+    # Check restraints
+    if system.restraints.shape[0] > 0:
+        print(f"\nRestraint distances:")
+        for r in system.restraints:
+            i, j, d0 = int(r[0]), int(r[1]), r[2]
+            d = float(jnp.linalg.norm(coords[i] - coords[j]))
+            print(f"  {i}-{j}: d={d:.2f}, target={d0:.2f}, error={abs(d-d0):.2f}")
+    
+    print("="*70 + "\n")
+    
+    return E_harm + E_exvol
+
+# ============================================================
 # Particle and RigidBody Definitions
 # ============================================================
 
@@ -182,7 +241,7 @@ def make_log_prob(system: ModularSystem, k_harmonic=0.5, k_exvol=1.0):
 # MCMC
 # ============================================================
 
-def setup_mcmc(log_prob, n_rb, n_flex, step_trans=0.5, step_quat=0.02, step_flex=1.0):
+def setup_mcmc(log_prob, n_rb, n_flex, step_trans=0.1, step_quat=0.01, step_flex=0.5):
     """Setup RMH kernel with per-DOF step sizes."""
     steps = []
     for _ in range(n_rb):
@@ -240,20 +299,7 @@ def save_mcmc_to_hdf5(
     filename: str,
     initial_state: Optional[np.ndarray] = None
 ):
-    """
-    Save rigid body MCMC results to HDF5 in standard format.
-    
-    Args:
-        coords: (n_samples, n_particles, 3) Cartesian coordinates
-        states: (n_samples, state_size) rigid body DOFs
-        log_probs: (n_samples,) log probabilities
-        acceptance_rate: Overall acceptance rate
-        system: ModularSystem instance
-        filename: Output HDF5 filename
-        initial_state: Optional initial state vector
-    
-    The saved HDF5 file is compatible with existing h5_to_rmf3 converters.
-    """
+    """Save rigid body MCMC results to HDF5 in standard format."""
     n_samples = coords.shape[0]
     n_particles = coords.shape[1]
     
@@ -349,48 +395,72 @@ def save_mcmc_to_hdf5(
 # ============================================================
 
 if __name__ == "__main__":
-    # Define two rigid bodies with different copy numbers
+    # FIXED: Smaller rigid bodies with appropriate radii and spacing
     rb1 = RigidBody(
-        ref_coords=jnp.array([[0., 0., 0.], [2., 0., 0.], [1., 1.73, 0.]]),
-        radii=jnp.array([1.5, 1.5, 1.5]),
+        ref_coords=jnp.array([[0., 0., 0.], [3., 0., 0.], [1.5, 2.6, 0.]]),  # Equilateral triangle
+        radii=jnp.array([1.0, 1.0, 1.0]),  # Smaller radii
         copy_number=1, name="triangle"
     )
     rb2 = RigidBody(
-        ref_coords=jnp.array([[0., 0., 0.], [6., 0., 0.], [6., 6., 0.], [0., 6., 0.]]),
-        radii=jnp.array([4.0, 4.0, 4.0, 4.0]),  # Different radii
+        ref_coords=jnp.array([[0., 0., 0.], [3., 0., 0.], [3., 3., 0.], [0., 3., 0.]]),  # Square
+        radii=jnp.array([1.0, 1.0, 1.0, 1.0]),  # Uniform radii
         copy_number=2, name="square"
     )
     
-    # Flexible linker particles
-    flex = [Particle(jnp.array([5., 0., 0.]), radius=0.5, name=f"flex_{i}") for i in range(3)]
+    # Flexible linker particles with smaller radii
+    flex = [Particle(jnp.array([0., 0., 0.]), radius=0.5, name=f"flex_{i}") for i in range(3)]
     
-    # Restraints: [particle_i, particle_j, ideal_distance]
+    # FIXED: More reasonable restraints based on particle sizes
     restraints = jnp.array([
-        [2, 7, 3.5],   # RB1 to flex
-        [7, 8, 3.0],   # flex internal
-        [8, 9, 3.0],   # flex internal  
-        [9, 3, 4.0],   # flex to RB2 (different d0)
+        [2, 7, 4.0],   # RB1 last particle to first flex (radius 1.0 + 0.5 + gap)
+        [7, 8, 2.5],   # flex-flex (2*0.5 + gap)
+        [8, 9, 2.5],   # flex-flex
+        [9, 3, 4.0],   # flex to RB2 (radius 0.5 + 1.0 + gap)
     ])
     
     # Create system
     system = ModularSystem([rb1, rb2], flex, restraints)
     
-    # Initialize: RB1 at (2,2,0), RB2 at (12,2,0), flex spread between
+    # FIXED: Initialize with better spacing to avoid overlaps
     init_state = system.init_state(
-        rb_positions=[jnp.array([2., 2., 0.]), jnp.array([12., 2., 0.])],
-        flex_positions=jnp.array([[5., 1., 0.], [7., 1., 0.], [9., 1., 0.]])
+        rb_positions=[
+            jnp.array([3., 3., 0.]),    # RB1 center
+            jnp.array([20., 3., 0.])    # RB2 center (far apart initially)
+        ],
+        flex_positions=jnp.array([
+            [10., 3., 0.],  # Spread between the rigid bodies
+            [13., 3., 0.],
+            [16., 3., 0.]
+        ])
     )
     
-    # Setup and run
-    log_prob = make_log_prob(system, k_harmonic=0.5, k_exvol=100.0)
-    kernel = setup_mcmc(log_prob, system.n_rb, system.n_flex)
+    # Diagnose initial state
+    initial_energy = diagnose_initial_state(system, init_state)
+    
+    # Setup with ADAPTIVE step sizes based on initial energy
+    if initial_energy > 1000:
+        print("⚠ High initial energy - using very small step sizes")
+        step_trans, step_quat, step_flex = 0.01, 0.001, 0.01
+    elif initial_energy > 100:
+        print("⚠ Moderate initial energy - using small step sizes")
+        step_trans, step_quat, step_flex = 0.05, 0.005, 0.05
+    else:
+        print("✓ Good initial energy - using normal step sizes")
+        step_trans, step_quat, step_flex = 0.2, 0.02, 0.2
+    
+    print(f"\nUsing step sizes: trans={step_trans}, quat={step_quat}, flex={step_flex}")
+    
+    # Setup and run with LOWER k_exvol initially
+    log_prob = make_log_prob(system, k_harmonic=0.5, k_exvol=10.0)  # Reduced from 100
+    kernel = setup_mcmc(log_prob, system.n_rb, system.n_flex, 
+                       step_trans=step_trans, step_quat=step_quat, step_flex=step_flex)
     
     results = run_mcmc(
         random.PRNGKey(42), kernel, system, init_state,
         n_steps=50_000, save_every=50, print_every=2000
     )
     
-    # Save using standard format (compatible with h5_to_rmf3)
+    # Save results
     save_mcmc_to_hdf5(
         coords=results['coords'],
         states=results['states'],
@@ -400,13 +470,3 @@ if __name__ == "__main__":
         filename="rigid_body_mcmc.h5",
         initial_state=init_state
     )
-    
-    # Verify HDF5 structure
-    print("\nVerifying HDF5 structure:")
-    with h5py.File("rigid_body_mcmc.h5", 'r') as f:
-        print(f"  Keys: {list(f.keys())}")
-        print(f"  coordinates shape: {f['coordinates'].shape}")
-        print(f"  radii shape: {f['radii'].shape}")
-        print(f"  Has initial_configuration: {'initial_configuration' in f}")
-        print(f"  Has best_configuration: {'best_configuration' in f}")
-        print(f"  Rigid body references: {list(f['rigid_body_references'].keys())}")
