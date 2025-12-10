@@ -79,9 +79,9 @@ def run_rmh_chain_with_logging(
     
     keys = random.split(key, n_steps)
     
-    # Storage
-    saved_positions = []
-    saved_log_probs = []
+    # Storage - SAVE INITIAL CONFIGURATION FIRST
+    saved_positions = [np.array(initial_position)]  # <-- ADD INITIAL CONFIG
+    saved_log_probs = [float(state.logdensity)]      # <-- ADD INITIAL LOG PROB
     accepts = []
     
     print(f"{'='*70}")
@@ -96,8 +96,8 @@ def run_rmh_chain_with_logging(
         state, (position, log_prob, accepted) = one_step(state, k)
         accepts.append(float(accepted))
         
-        # Save at intervals
-        if i % save_every == 0:
+        # Save at intervals (i+1 because we already saved initial at index 0)
+        if (i + 1) % save_every == 0:
             saved_positions.append(np.array(position))
             saved_log_probs.append(float(log_prob))
         
@@ -121,14 +121,15 @@ def run_rmh_chain_with_logging(
     print(f"Final log_prob: {log_prob:.4f}")
     print(f"Best log_prob: {np.max(saved_log_probs):.4f}")
     print(f"Overall acceptance: {acceptance_rate:.1%}")
-    print(f"Saved {len(saved_positions)} frames")
+    print(f"Saved {len(saved_positions)} frames (including initial)")
     
     # Save to HDF5
     save_mcmc_to_hdf5(
         saved_positions,
         saved_log_probs,
         acceptance_rate,
-        output_file
+        output_file,
+        initial_position  # <-- PASS INITIAL CONFIG
     )
     
     return saved_positions, saved_log_probs, acceptance_rate
@@ -137,7 +138,8 @@ def save_mcmc_to_hdf5(
     positions: np.ndarray,
     log_probs: np.ndarray,
     acceptance_rate: float,
-    filename: str
+    filename: str,
+    initial_position: np.ndarray = None
 ):
     """
     Save MCMC samples to HDF5.
@@ -145,6 +147,7 @@ def save_mcmc_to_hdf5(
     Structure:
         coordinates: (n_samples, n_particles, 3)
         log_probabilities: (n_samples,)
+        initial_configuration: (n_particles, 3)  <-- NEW
         best_configuration: (n_particles, 3)
     """
     n_samples = positions.shape[0]
@@ -166,6 +169,14 @@ def save_mcmc_to_hdf5(
         # Log probabilities
         f.create_dataset('log_probabilities', data=log_probs, compression='gzip')
         
+        # Initial configuration (NEW)
+        if initial_position is not None:
+            init_grp = f.create_group('initial_configuration')
+            initial_coords = initial_position.reshape(n_particles, 3)
+            init_grp.create_dataset('coordinates', data=initial_coords)
+            print(f"\nInitial configuration saved:")
+            print(f"  Coordinates:\n{initial_coords}")
+        
         # Best configuration
         best_idx = np.argmax(log_probs)
         best_grp = f.create_group('best_configuration')
@@ -183,13 +194,17 @@ def save_mcmc_to_hdf5(
 
 if __name__ == "__main__":
     # Initialize system
-    n_particles = 2
-    box_size = 100.0
+    n_particles = 3
+    box_size = 500.0
     positions, radii, indices = initialize_particle_positions(n_particles, box_size, seed=42)
     
     print("Initial Positions:")
     print(positions)
-    print("\nInitial distance:", float(jnp.linalg.norm(positions[1] - positions[0])))
+    print("\nInitial distances:")
+    for i in range(n_particles):
+        for j in range(i+1, n_particles):
+            dist = float(jnp.linalg.norm(positions[j] - positions[i]))
+            print(f"  Particle {i} <-> {j}: {dist:.2f}")
     
     # Flatten positions for MCMC (shape: (n_particles*3,))
     initial_position = positions.ravel()
@@ -207,7 +222,7 @@ if __name__ == "__main__":
         key=random.PRNGKey(789),
         kernel=rmh_kernel,
         initial_position=initial_position,
-        n_steps=10_000,
+        n_steps=50_000,
         save_every=100,
         print_every=1000,
         output_file="simple_mcmc_coords.h5"
@@ -218,11 +233,19 @@ if __name__ == "__main__":
     print("Analysis:")
     print(f"{'='*70}")
     
-    # Reshape best configuration
+    # Check initial vs final
+    initial_coords = positions_out[0].reshape(n_particles, 3)
+    final_coords = positions_out[-1].reshape(n_particles, 3)
     best_idx = np.argmax(log_probs_out)
     best_coords = positions_out[best_idx].reshape(n_particles, 3)
-    best_distance = np.linalg.norm(best_coords[1] - best_coords[0])
     
-    print(f"Best configuration distance: {best_distance:.2f}")
-    print(f"Target distance (d0): 10.0")
-    print(f"Best positions:\n{best_coords}")
+    print(f"\nInitial configuration (frame 0):")
+    print(initial_coords)
+    print(f"\nFinal configuration (frame {len(positions_out)-1}):")
+    print(final_coords)
+    print(f"\nBest configuration (frame {best_idx}):")
+    print(best_coords)
+    
+    # Check if initial config matches what we started with
+    print(f"\nVerification:")
+    print(f"Initial coords match input: {np.allclose(initial_coords, positions)}")

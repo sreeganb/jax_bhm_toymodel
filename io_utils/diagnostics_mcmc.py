@@ -32,11 +32,24 @@ def plot_mcmc_diagnostics(hdf5_file, output_dir="output_figures"):
     print(f"Output directory: {output_dir}")
     print(f"{'='*70}\n")
     
-    # Load data
     with h5py.File(hdf5_file, 'r') as f:
-        coords = f['coordinates'][:]  # (n_samples, n_particles, 3)
+        coords = f['coordinates'][:]
         log_probs = f['log_probabilities'][:]
         acceptance_rate = f.attrs.get('acceptance_rate', None)
+        
+        # Check for initial configuration
+        if 'initial_configuration' in f:
+            initial_coords = f['initial_configuration/coordinates'][:]
+            print(f"Initial configuration found:")
+            print(f"  Shape: {initial_coords.shape}")
+            print(f"  Coordinates:\n{initial_coords}")
+            
+            # Verify frame 0 matches initial
+            if np.allclose(coords[0], initial_coords):
+                print("  ✓ Frame 0 matches initial configuration")
+            else:
+                print("  ⚠ WARNING: Frame 0 doesn't match initial configuration!")        
+        
         n_samples = coords.shape[0]
     
     # Calculate distances between particles
