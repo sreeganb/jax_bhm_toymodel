@@ -4,6 +4,9 @@ import jax.numpy as jnp
 from jax import random
 import h5py
 from datetime import datetime
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 print("JAX is using device:", jax.default_backend())
 
@@ -277,32 +280,3 @@ if __name__ == "__main__":
         print_every=1000,
         output_file="mcmc_coords_with_sigma.h5"
     )
-    
-    # Analyze sigma convergence
-    import matplotlib.pyplot as plt
-    
-    sigma_trace = states_out[:, -1]
-    
-    plt.figure(figsize=(12, 4))
-    
-    plt.subplot(131)
-    plt.plot(sigma_trace)
-    plt.xlabel('Sample')
-    plt.ylabel('Sigma')
-    plt.title('Sigma Trace')
-    
-    plt.subplot(132)
-    plt.hist(sigma_trace, bins=50, density=True, alpha=0.7)
-    plt.xlabel('Sigma')
-    plt.ylabel('Density')
-    plt.title('Sigma Posterior')
-    
-    plt.subplot(133)
-    plt.plot(log_probs_out)
-    plt.xlabel('Sample')
-    plt.ylabel('Log Probability')
-    plt.title('Log Probability Trace')
-    
-    plt.tight_layout()
-    plt.savefig('sigma_analysis.png', dpi=150)
-    print("\nSaved sigma analysis plot to: sigma_analysis.png")
