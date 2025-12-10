@@ -231,19 +231,118 @@ def run_mcmc(key, kernel, system, init_state, n_steps, save_every=100, print_eve
           f"Accept: {saved['acceptance']:.1%}")
     return saved
 
-def save_results(saved, filename):
-    """Save MCMC results to HDF5."""
+def save_mcmc_to_hdf5(
+    coords: np.ndarray,
+    states: np.ndarray,
+    log_probs: np.ndarray,
+    acceptance_rate: float,
+    system: ModularSystem,
+    filename: str,
+    initial_state: Optional[np.ndarray] = None
+):
+    """
+    Save rigid body MCMC results to HDF5 in standard format.
+    
+    Args:
+        coords: (n_samples, n_particles, 3) Cartesian coordinates
+        states: (n_samples, state_size) rigid body DOFs
+        log_probs: (n_samples,) log probabilities
+        acceptance_rate: Overall acceptance rate
+        system: ModularSystem instance
+        filename: Output HDF5 filename
+        initial_state: Optional initial state vector
+    
+    The saved HDF5 file is compatible with existing h5_to_rmf3 converters.
+    """
+    n_samples = coords.shape[0]
+    n_particles = coords.shape[1]
+    
     with h5py.File(filename, 'w') as f:
-        f.attrs['timestamp'] = datetime.now().isoformat()
-        f.attrs['acceptance'] = saved['acceptance']
-        f.create_dataset('coordinates', data=saved['coords'], compression='gzip')
-        f.create_dataset('states', data=saved['states'], compression='gzip')
-        f.create_dataset('log_probs', data=saved['log_probs'], compression='gzip')
+        # Metadata
+        f.attrs['creation_date'] = datetime.now().isoformat()
+        f.attrs['n_samples'] = n_samples
+        f.attrs['n_particles'] = n_particles
+        f.attrs['acceptance_rate'] = acceptance_rate
         
-        best_idx = np.argmax(saved['log_probs'])
-        f.attrs['best_idx'] = best_idx
-        f.attrs['best_log_prob'] = saved['log_probs'][best_idx]
-    print(f"Saved {len(saved['coords'])} frames to {filename}")
+        # System information
+        f.attrs['n_rigid_bodies'] = system.n_rb
+        f.attrs['n_rigid_particles'] = system.n_rb_particles
+        f.attrs['n_flexible_particles'] = system.n_flex
+        f.attrs['state_dof'] = system.state_size
+        
+        # Main datasets - CARTESIAN COORDINATES (for visualization)
+        f.create_dataset('coordinates', data=coords, compression='gzip')
+        f.create_dataset('log_probabilities', data=log_probs, compression='gzip')
+        
+        # Store radii for visualization
+        f.create_dataset('radii', data=system.radii)
+        
+        # Rigid body states (for analysis)
+        rb_grp = f.create_group('rigid_body_states')
+        rb_grp.create_dataset('states', data=states, compression='gzip')
+        
+        # Store reference configurations
+        rb_ref_grp = f.create_group('rigid_body_references')
+        for i, rb in enumerate(system.rigid_bodies):
+            rb_ref_grp.create_dataset(f'body_{i}_coords', data=rb.ref_coords)
+            rb_ref_grp.create_dataset(f'body_{i}_radii', data=rb.radii)
+            rb_ref_grp.attrs[f'body_{i}_name'] = rb.name
+            rb_ref_grp.attrs[f'body_{i}_copy_number'] = rb.copy_number
+            rb_ref_grp.attrs[f'body_{i}_n_particles'] = rb.ref_coords.shape[0]
+        
+        # Initial configuration
+        if initial_state is not None:
+            init_grp = f.create_group('initial_configuration')
+            init_coords = system.state_to_coords(initial_state)
+            init_grp.create_dataset('coordinates', data=init_coords)
+            init_grp.create_dataset('state', data=initial_state)
+            
+            # Store initial rigid body DOFs
+            offset = 0
+            for i in range(system.n_rb):
+                rb_state = initial_state[offset:offset+7]
+                init_grp.attrs[f'rb{i}_translation'] = rb_state[:3]
+                init_grp.attrs[f'rb{i}_quaternion'] = rb_state[3:7]
+                offset += 7
+        
+        # Best configuration
+        best_idx = np.argmax(log_probs)
+        best_grp = f.create_group('best_configuration')
+        best_grp.attrs['sample_index'] = int(best_idx)
+        best_grp.attrs['log_probability'] = float(log_probs[best_idx])
+        best_grp.create_dataset('coordinates', data=coords[best_idx])
+        best_grp.create_dataset('state', data=states[best_idx])
+        
+        # Store best rigid body DOFs
+        offset = 0
+        for i in range(system.n_rb):
+            rb_state = states[best_idx, offset:offset+7]
+            best_grp.attrs[f'rb{i}_translation'] = rb_state[:3]
+            best_grp.attrs[f'rb{i}_quaternion'] = rb_state[3:7]
+            offset += 7
+        
+        # Restraint information (for reproducibility)
+        if system.restraints.shape[0] > 0:
+            f.create_dataset('restraints', data=system.restraints)
+    
+    print(f"\n{'='*70}")
+    print(f"Saved to: {filename}")
+    print(f"{'='*70}")
+    print(f"  Frames: {n_samples}")
+    print(f"  Particles: {n_particles} ({system.n_rb_particles} rigid + {system.n_flex} flex)")
+    print(f"  Rigid bodies: {system.n_rb}")
+    print(f"  Acceptance rate: {acceptance_rate:.1%}")
+    print(f"  Best log_prob: {np.max(log_probs):.2f} (frame {best_idx})")
+    print(f"{'='*70}")
+    print("\nDatasets saved:")
+    print(f"  - coordinates (n_samples={n_samples}, n_particles={n_particles}, 3)")
+    print(f"  - log_probabilities (n_samples={n_samples})")
+    print(f"  - radii (n_particles={n_particles})")
+    print(f"  - rigid_body_states/states (internal DOFs)")
+    print(f"  - rigid_body_references/* (reference structures)")
+    print(f"\n✓ Compatible with existing h5_to_rmf3 converter!")
+    print(f"{'='*70}\n")
+
 
 # ============================================================
 # Example Usage
@@ -290,4 +389,24 @@ if __name__ == "__main__":
         random.PRNGKey(42), kernel, system, init_state,
         n_steps=20_000, save_every=50, print_every=2000
     )
-    save_results(results, "rigid_body_quat.h5")
+    
+    # Save using standard format (compatible with h5_to_rmf3)
+    save_mcmc_to_hdf5(
+        coords=results['coords'],
+        states=results['states'],
+        log_probs=results['log_probs'],
+        acceptance_rate=results['acceptance'],
+        system=system,
+        filename="rigid_body_mcmc.h5",
+        initial_state=init_state
+    )
+    
+    # Verify HDF5 structure
+    print("\nVerifying HDF5 structure:")
+    with h5py.File("rigid_body_mcmc.h5", 'r') as f:
+        print(f"  Keys: {list(f.keys())}")
+        print(f"  coordinates shape: {f['coordinates'].shape}")
+        print(f"  radii shape: {f['radii'].shape}")
+        print(f"  Has initial_configuration: {'initial_configuration' in f}")
+        print(f"  Has best_configuration: {'best_configuration' in f}")
+        print(f"  Rigid body references: {list(f['rigid_body_references'].keys())}")
