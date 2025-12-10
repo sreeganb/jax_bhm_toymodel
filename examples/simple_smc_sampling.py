@@ -138,7 +138,7 @@ if __name__ == "__main__":
         {},                         # Empty params dict (proposal is baked in)
         resampling.systematic,
         target_ess=0.5,
-        num_mcmc_steps=10
+        num_mcmc_steps=100
     )
 
     # Initialize the SMC state
