@@ -8,12 +8,12 @@ import jax.numpy as jnp
 from jax import random
 import h5py
 from datetime import datetime
+from functools import partial
 
 print("JAX is using device:", jax.default_backend())
 
 import blackjax
 import blackjax.smc.resampling as resampling
-from blackjax.smc import extend_params
 
 from scoring.harmonic import jax_harmonic_score
 from scoring.exvol import jax_excluded_volume
@@ -32,15 +32,11 @@ def initialize_particle_positions(n_particles, box_size, seed=0):
 
 def log_prob_fn(positions_flat, radii, indices):
     """Combined log probability from harmonic and excluded volume scores."""
-    # Reshape flat array to (N, 3)
     positions = positions_flat.reshape(-1, 3)
-    
-    # Compute energies
     harmonic_energy = jax_harmonic_score(positions, indices, d0=4.5, k=0.5)
     exvol_energy = jax_excluded_volume(positions, radii, k=1.0)
     total_energy = harmonic_energy + exvol_energy
-    
-    return -total_energy  # Negative energy as log prob
+    return -total_energy
 
 # ============================================================
 # SMC Functions
@@ -69,22 +65,16 @@ def smc_inference_loop(rng_key, smc_kernel, initial_state):
 
     return n_iter, final_state
 
-def save_smc_to_hdf5(
-    particles: np.ndarray,
-    log_probs: np.ndarray,
-    filename: str
-):
+def save_smc_to_hdf5(particles, log_probs, filename):
     """Save SMC population to HDF5."""
     n_samples = particles.shape[0]
     n_particles = particles.shape[1] // 3
-    
     coords_reshaped = particles.reshape(n_samples, n_particles, 3)
     
     with h5py.File(filename, 'w') as f:
         f.attrs['creation_date'] = datetime.now().isoformat()
         f.attrs['n_samples'] = n_samples
         f.attrs['method'] = "Tempered SMC"
-        
         f.create_dataset('coordinates', data=coords_reshaped, compression='gzip')
         f.create_dataset('log_probabilities', data=log_probs, compression='gzip')
         
@@ -118,8 +108,14 @@ if __name__ == "__main__":
     step_size = jnp.ones(n_particles * 3) * 2.5
     proposal_distribution = blackjax.mcmc.random_walk.normal(step_size)
     
-    # Parameters for RMH - the proposal distribution
-    rmh_parameters = {"proposal_distribution": proposal_distribution}
+    # Create a wrapped build_kernel that bakes in the proposal
+    def rmh_build_kernel():
+        base_kernel = blackjax.rmh.build_kernel()
+        
+        def wrapped_kernel(rng_key, state, logdensity_fn):
+            return base_kernel(rng_key, state, logdensity_fn, proposal_distribution)
+        
+        return wrapped_kernel
 
     # 4. Initialize SMC Population
     num_smc_particles = 1000
@@ -137,9 +133,9 @@ if __name__ == "__main__":
     tempered = blackjax.adaptive_tempered_smc(
         prior_log_prob,
         log_likelihood,
-        blackjax.rmh.build_kernel(),  # RMH kernel builder
-        blackjax.rmh.init,             # RMH init function
-        extend_params(rmh_parameters),
+        rmh_build_kernel(),         # Our wrapped kernel
+        blackjax.rmh.init,          # RMH init
+        {},                         # Empty params dict (proposal is baked in)
         resampling.systematic,
         target_ess=0.5,
         num_mcmc_steps=10
