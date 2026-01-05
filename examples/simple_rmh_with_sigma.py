@@ -241,12 +241,12 @@ def save_mcmc_to_hdf5(
 
 if __name__ == "__main__":
     # Initialize system
-    n_particles = 11
+    n_particles = 13
     box_size = 110.0
     positions, radii, indices = initialize_particle_positions(n_particles, box_size, seed=42)
     
     # Initial sigma value
-    initial_sigma = 1.0
+    initial_sigma = 6.0
     
     # Flatten positions and append sigma
     initial_state = jnp.concatenate([positions.ravel(), jnp.array([initial_sigma])])
@@ -262,7 +262,7 @@ if __name__ == "__main__":
     
     # Setup MCMC with different step sizes
     step_size_coords = jnp.ones(n_particles * 3) * 4.0  # Coordinate step size
-    step_size_sigma = 0.1  # Sigma step size (smaller because it's a single parameter)
+    step_size_sigma = 0.75  # Sigma step size (smaller because it's a single parameter)
     
     rmh_kernel = setup_coordinate_rmh_with_sigma(
         log_prob, 
