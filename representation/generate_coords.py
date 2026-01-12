@@ -55,6 +55,20 @@ def generate_random_coords(
     minval: float = -200.0,
     maxval: float = 200.0
 ) -> dict[str, jnp.ndarray]:
+    """
+    Docstring for generate_random_coords
+    
+    :param key: JAX random key
+    :type key: jax.Array
+    :param n_dict: Dictionary specifying number of particles per type
+    :type n_dict: dict[str, int]
+    :param minval: Minimum coordinate value
+    :type minval: float
+    :param maxval: Maximum coordinate value
+    :type maxval: float
+    :return: Dictionary of coordinates per particle type
+    :rtype: dict[str, jnp.ndarray]
+    """
     coords = {}
     subkeys = jax.random.split(key, len(n_dict))
     for i, (label, n) in enumerate(n_dict.items()):
