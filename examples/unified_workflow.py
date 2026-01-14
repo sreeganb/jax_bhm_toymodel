@@ -1,247 +1,209 @@
-#------------------------------------------------------------------------------
-# Example: Unified ParticleState Workflow
-# Demonstrates all 4 stages: Representation → Scoring → Sampling → Validation
-#------------------------------------------------------------------------------
+"""
+Unified Workflow Example: Demonstrating ParticleState throughout all 4 stages.
 
+This example shows:
+1. Representation: Creating ParticleState with types and radii
+2. Scoring: Using ParticleState directly in scoring functions
+3. Sampling: MCMC sampling with ParticleState
+4. Validation: Saving/loading ParticleState to/from HDF5
+"""
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import numpy as np
 import jax
 import jax.numpy as jnp
-import numpy as np
-import blackjax
-from functools import partial
+from jax import random
+import h5py
+from datetime import datetime
 
 print("JAX is using device:", jax.default_backend())
 
-# Import from our package
-from representation import ParticleState
-from representation.generate_coords import (
-    create_particle_state,
-    create_random_particle_state,
-    create_from_ideal_coords,
-    get_pairwise_indices
-)
-from scoring import (
-    jax_harmonic_score,
-    jax_excluded_volume,
-    jax_excluded_volume_typed
-)
+# Now import our modules
+from representation import ParticleState, ParticleSystemFactory
+from representation.generate_coords import generate_random_coords
+from scoring.harmonic import jax_harmonic_score
+from scoring.exvol import jax_excluded_volume
 from io_utils.save_as_h5py import (
     save_particle_state,
-    save_particle_trajectory,
-    load_particle_state
+    load_particle_state,
+    save_particle_trajectory
 )
 
-# ============================================================
-# STAGE 1: REPRESENTATION
-# Define particles with positions, radii, types
-# ============================================================
+print(f"{'='*70}")
+print("Unified Workflow: ParticleState Through All 4 Stages")
+print(f"{'='*70}\n")
 
-print("\n" + "="*70)
-print("STAGE 1: REPRESENTATION")
-print("="*70)
+# ============================================================
+# Stage 1: REPRESENTATION
+# ============================================================
+print("Stage 1: REPRESENTATION")
+print("-" * 70)
 
-# Method 1: Create from type dictionary (recommended)
-coords = {
-    'A': jnp.array([
-        [0., 0., 0.],
-        [5., 0., 0.],
-        [10., 0., 0.],
-        [15., 0., 0.]
-    ]),
-    'B': jnp.array([
-        [2.5, 4., 0.],
-        [7.5, 4., 0.],
-        [12.5, 4., 0.]
-    ])
+# Define particle types
+particle_types = {
+    "ProteinA": {"count": 5, "radius": 2.0},
+    "ProteinB": {"count": 3, "radius": 3.0},
+    "DNA": {"count": 2, "radius": 1.5}
 }
 
-# Different radii per type - this is the key feature!
-radii = {'A': 2.0, 'B': 1.5}
-copy_numbers = {'A': 1, 'B': 2}
+# Create using factory
+factory = ParticleSystemFactory(particle_types)
+key = random.PRNGKey(42)
+state = factory.create_random_state(key, box_size=50.0)
 
-state = create_particle_state(coords, radii=radii, copy_numbers=copy_numbers)
-
-print(f"\nCreated ParticleState:")
+print(f"Created ParticleState:")
 print(f"  Total particles: {state.n_particles}")
-print(f"  Particle types: {list(state.type_names.values())}")
-print(f"  Radii: {np.unique(state.radii)}")
-print(f"  Position shape: {state.positions.shape}")
-
-# Method 2: Random initialization (for MCMC starting points)
-key = jax.random.PRNGKey(42)
-random_state = create_random_particle_state(
-    key,
-    n_dict={'A': 4, 'B': 3},
-    radii=radii,
-    box_size=50.0
-)
-print(f"\nRandom state: {random_state.n_particles} particles in [-25, 25]^3 box")
-
-# Method 3: From ideal/reference coordinates
-ideal_state = create_from_ideal_coords(radii={'A': 5.0, 'B': 5.0, 'C': 3.0})
-print(f"Ideal state: {ideal_state.n_particles} particles (A:8, B:8, C:16)")
-
+print(f"  Types: {list(state.type_names.values())}")
+print(f"  Radii range: {jnp.min(state.radii):.2f} - {jnp.max(state.radii):.2f}")
+print(f"  Copy numbers: {dict(zip(state.type_names.values(), [state.get_particles_by_type(i).shape[0] for i in range(len(state.type_names))]))}")
+print()
 
 # ============================================================
-# STAGE 2: SCORING
-# Compute energies using positions + radii from ParticleState
+# Stage 2: SCORING
 # ============================================================
+print("Stage 2: SCORING")
+print("-" * 70)
 
-print("\n" + "="*70)
-print("STAGE 2: SCORING")
-print("="*70)
-
-# Generate restraint indices (e.g., connect consecutive A particles)
-indices_sequential = jnp.array([[0, 1], [1, 2], [2, 3]])  # A-A chain
-indices_cross = get_pairwise_indices(state, type_pairs=[('A', 'B')])
-
-print(f"\nRestraint indices:")
-print(f"  Sequential (A chain): {indices_sequential.shape[0]} pairs")
-print(f"  Cross-type (A-B): {indices_cross.shape[0]} pairs")
-
-# Harmonic restraints - ParticleState passed directly!
-E_harmonic = jax_harmonic_score(state, indices_sequential, d0=5.0, k=0.5)
-print(f"\nHarmonic energy (A chain, d0=5.0): {E_harmonic:.4f}")
-
-# Excluded volume - radii extracted automatically from state!
-E_exvol = jax_excluded_volume(state, k=1.0)
-print(f"Excluded volume energy: {E_exvol:.4f}")
-
-# Type-aware excluded volume (different k for different type pairs)
-k_matrix = jnp.array([
-    [1.0, 0.5],  # A-A, A-B
-    [0.5, 2.0]   # B-A, B-B
+# Define restraints (connect first particle of each type)
+restraints = jnp.array([
+    [0, 5],   # ProteinA[0] - ProteinB[0]
+    [5, 8],   # ProteinB[0] - DNA[0]
 ])
-E_exvol_typed = jax_excluded_volume_typed(state, k_matrix=k_matrix)
-print(f"Type-aware excluded volume: {E_exvol_typed:.4f}")
 
-# Total energy as log probability
-total_energy = E_harmonic + E_exvol
-log_prob = -total_energy
-print(f"\nTotal energy: {total_energy:.4f}")
-print(f"Log probability: {log_prob:.4f}")
+# Score using ParticleState directly
+harmonic_energy = jax_harmonic_score(state, restraints, d0=5.0, k=0.5)
+exvol_energy = jax_excluded_volume(state, k=1.0)
+total_energy = harmonic_energy + exvol_energy
 
+print(f"Energy scores:")
+print(f"  Harmonic: {harmonic_energy:.2f}")
+print(f"  Excluded volume: {exvol_energy:.2f}")
+print(f"  Total: {total_energy:.2f}")
+print()
 
 # ============================================================
-# STAGE 3: SAMPLING
-# Use BlackJAX with ParticleState for MCMC
+# Stage 3: SAMPLING
 # ============================================================
+print("Stage 3: SAMPLING")
+print("-" * 70)
 
-print("\n" + "="*70)
-print("STAGE 3: SAMPLING (Mini MCMC Demo)")
-print("="*70)
+def log_prob(positions_flat):
+    """Log probability function for MCMC."""
+    positions = positions_flat.reshape(-1, 3)
+    # Create temporary state with updated positions
+    temp_state = ParticleState(
+        positions=positions,
+        radii=state.radii,
+        particle_types=state.particle_types,
+        copy_numbers=state.copy_numbers,
+        type_names=state.type_names
+    )
+    h_energy = jax_harmonic_score(temp_state, restraints, d0=5.0, k=0.5)
+    ev_energy = jax_excluded_volume(temp_state, k=1.0)
+    return -(h_energy + ev_energy)
 
-# Define log probability function using closure over state attributes
-def make_log_prob(state_template, indices, d0=5.0, k_harm=0.5, k_exvol=1.0):
-    """Create log prob function that preserves particle attributes."""
-    radii = state_template.radii  # Captured in closure
+# Simple random walk MCMC
+def mcmc_step(key, positions, step_size=0.5):
+    """Single MCMC step with Metropolis-Hastings."""
+    key1, key2 = random.split(key)
     
-    def log_prob_fn(positions_flat):
-        positions = positions_flat.reshape(-1, 3)
-        E_harm = jax_harmonic_score(positions, indices, d0=d0, k=k_harm)
-        E_exvol = jax_excluded_volume(positions, radii, k=k_exvol)
-        return -(E_harm + E_exvol)
+    # Propose move
+    proposal = positions + random.normal(key1, positions.shape) * step_size
     
-    return log_prob_fn
+    # Accept/reject
+    log_prob_current = log_prob(positions)
+    log_prob_proposal = log_prob(proposal)
+    log_accept = log_prob_proposal - log_prob_current
+    
+    accept = jnp.log(random.uniform(key2)) < log_accept
+    new_positions = jnp.where(accept, proposal, positions)
+    
+    return new_positions, accept
 
-log_prob = make_log_prob(state, indices_sequential, d0=5.0)
-
-# Setup RMH sampler
-step_size = jnp.ones(state.n_particles * 3) * 0.5
-proposal = blackjax.mcmc.random_walk.normal(step_size)
-kernel = blackjax.rmh(log_prob, proposal)
-
-# Initialize sampler with flattened positions
-init_position = state.flat_positions
-rmh_state = kernel.init(init_position)
-
-print(f"\nInitial log probability: {rmh_state.logdensity:.4f}")
-
-# Run a few steps
-key = jax.random.PRNGKey(123)
-n_steps = 100
+# Run MCMC
+n_steps = 1000
+positions = state.positions.flatten()
+key = random.PRNGKey(123)
 trajectory = []
-log_probs = []
+accepts = []
 
-current_state = rmh_state
+print(f"Running {n_steps} MCMC steps...")
 for i in range(n_steps):
-    key, subkey = jax.random.split(key)
-    current_state, info = kernel.step(subkey, current_state)
+    key, subkey = random.split(key)
+    positions, accept = mcmc_step(subkey, positions)
     
-    if i % 10 == 0:
-        # Store as ParticleState (preserving all attributes!)
-        new_particle_state = state.with_positions(current_state.position)
-        trajectory.append(new_particle_state)
-        log_probs.append(float(current_state.logdensity))
+    if i % 100 == 0:
+        trajectory.append(positions.reshape(-1, 3))
+        accepts.append(accept)
+        if i % 200 == 0:
+            print(f"  Step {i}: log_prob = {log_prob(positions):.2f}, accept = {accept}")
 
-print(f"Ran {n_steps} MCMC steps, saved {len(trajectory)} frames")
-print(f"Log prob range: [{min(log_probs):.2f}, {max(log_probs):.2f}]")
-print(f"Best log prob: {max(log_probs):.2f} at frame {np.argmax(log_probs)}")
-
+acceptance_rate = np.mean(accepts)
+print(f"Acceptance rate: {acceptance_rate:.2%}")
+print()
 
 # ============================================================
-# STAGE 4: VALIDATION
-# Save results with full attribute preservation
+# Stage 4: VALIDATION
 # ============================================================
+print("Stage 4: VALIDATION")
+print("-" * 70)
 
-print("\n" + "="*70)
-print("STAGE 4: VALIDATION (Save/Load)")
-print("="*70)
+# Save final state
+output_dir = Path("output")
+output_dir.mkdir(exist_ok=True)
 
-# Save trajectory with all particle attributes preserved
-output_file = "unified_mcmc_trajectory.h5"
-save_particle_trajectory(
-    output_file,
-    trajectory,
-    log_probs=np.array(log_probs),
+final_state = ParticleState(
+    positions=positions.reshape(-1, 3),
+    radii=state.radii,
+    particle_types=state.particle_types,
+    copy_numbers=state.copy_numbers,
+    type_names=state.type_names
+)
+
+state_file = output_dir / "final_state.h5"
+save_particle_state(
+    str(state_file),
+    final_state,
     metadata={
-        'method': 'RMH-MCMC',
-        'n_steps': n_steps,
-        'd0': 5.0,
-        'k_harmonic': 0.5,
-        'k_exvol': 1.0
+        "method": "MCMC",
+        "n_steps": n_steps,
+        "acceptance_rate": float(acceptance_rate)
     }
 )
 
-# Demonstrate loading
-print("\nLoading and verifying...")
-loaded_trajectory, loaded_probs = __import__('io_utils.save_as_h5py', fromlist=['load_particle_trajectory']).load_particle_trajectory(output_file)
+# Save trajectory
+trajectory_states = [
+    ParticleState(
+        positions=pos,
+        radii=state.radii,
+        particle_types=state.particle_types,
+        copy_numbers=state.copy_numbers,
+        type_names=state.type_names
+    )
+    for pos in trajectory
+]
 
-print(f"  Loaded {len(loaded_trajectory)} frames")
-print(f"  Particles per frame: {loaded_trajectory[0].n_particles}")
-print(f"  Preserved radii: {loaded_trajectory[0].radii[:4]}")  # First 4 = type A
-print(f"  Preserved types: {loaded_trajectory[0].type_names}")
+log_probs = np.array([log_prob(pos.flatten()) for pos in trajectory])
+traj_file = output_dir / "trajectory.h5"
+save_particle_trajectory(
+    str(traj_file),
+    trajectory_states,
+    log_probs=log_probs,
+    metadata={"n_steps": n_steps}
+)
 
-# Verify attributes are preserved
-assert jnp.allclose(loaded_trajectory[0].radii, state.radii), "Radii should be preserved!"
-assert loaded_trajectory[0].type_names == state.type_names, "Type names should be preserved!"
-print("\n✓ All particle attributes successfully preserved through pipeline!")
+# Test loading
+print("\nTesting load/save roundtrip...")
+loaded_state = load_particle_state(str(state_file))
+print(f"  Loaded {loaded_state.n_particles} particles")
+print(f"  Position match: {jnp.allclose(loaded_state.positions, final_state.positions)}")
+print(f"  Radii match: {jnp.allclose(loaded_state.radii, final_state.radii)}")
+print(f"  Types match: {jnp.all(loaded_state.particle_types == final_state.particle_types)}")
 
-
-# ============================================================
-# BONUS: Gradient computation with ParticleState
-# ============================================================
-
-print("\n" + "="*70)
-print("BONUS: Gradient Computation")
-print("="*70)
-
-# JAX gradients work seamlessly with our scoring functions
-@jax.jit
-def energy_fn(positions, radii, indices):
-    E1 = jax_harmonic_score(positions, indices, d0=5.0, k=0.5)
-    E2 = jax_excluded_volume(positions, radii, k=1.0)
-    return E1 + E2
-
-grad_fn = jax.grad(energy_fn)
-gradients = grad_fn(state.positions, state.radii, indices_sequential)
-
-print(f"Gradient shape: {gradients.shape}")
-print(f"Gradient norm: {jnp.linalg.norm(gradients):.4f}")
-print(f"Mean |gradient|: {jnp.mean(jnp.abs(gradients)):.4f}")
-
-# This enables gradient-based sampling (HMC, NUTS) in the future!
-print("\n✓ Gradients computed successfully - ready for HMC/NUTS!")
-
-print("\n" + "="*70)
-print("COMPLETE: All 4 Bayesian inference stages demonstrated")
-print("="*70)
+print(f"\n{'='*70}")
+print("Workflow complete! Check output/ directory for results.")
+print(f"{'='*70}")
