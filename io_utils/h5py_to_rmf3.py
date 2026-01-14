@@ -7,100 +7,145 @@ import IMP.algebra
 import IMP.rmf
 import RMF
 import sys
+import json
 
 
-def convert_simple_mcmc_to_rmf3(hdf5_file, rmf3_file, radius=1.0, color=None):
+def convert_simple_mcmc_to_rmf3(
+    hdf5_file,
+    rmf3_file,
+    radius: float = 1.0,
+    color=None,
+    color_map=None,
+):
     """
-    Convert simple 2-particle MCMC HDF5 to RMF3 format.
-    
+    Convert an HDF5 trajectory to RMF3, supporting per-particle radii and colors.
+
+    Expected HDF5 layout (as written by save_as_h5py or save_particle_trajectory):
+      - coordinates: (n_frames, n_particles, 3)  OR (n_particles, 3) single frame
+      - log_probabilities: (n_frames,)  [optional]
+      - radii: (n_particles,)           [optional]
+      - particle_types: (n_particles,)  [optional]
+      - attrs.type_names: JSON mapping type_id -> name  [optional]
+
     Args:
-        hdf5_file: Path to HDF5 file with structure:
-            - coordinates: (n_samples, n_particles, 3)
-            - log_probabilities: (n_samples,)
-        rmf3_file: Output RMF3 file path
-        radius: Particle radius (default: 1.0)
-        color: IMP.display.Color (default: blue)
+        hdf5_file: input HDF5
+        rmf3_file: output RMF3
+        radius: fallback scalar radius if /radii missing
+        color: fallback IMP.display.Color if no types or color_map provided
+        color_map: optional dict mapping type name or type id to RGB tuple (0-1 floats)
     """
+
     if color is None:
-        color = IMP.display.Color(0.2, 0.6, 1.0)  # Blue
-    
-    # Read HDF5
+        color = IMP.display.Color(0.2, 0.6, 1.0)  # default blue
+
     with h5py.File(hdf5_file, 'r') as f:
-        coords = f['coordinates'][:]  # Shape: (n_samples, n_particles, 3)
-        log_probs = f['log_probabilities'][:]
+        coords = f['coordinates'][:]
+        if coords.ndim == 2:
+            coords = coords[None, ...]  # promote single frame
         n_frames, n_particles, _ = coords.shape
-        
-        print(f"{'='*70}")
-        print(f"Converting MCMC trajectory to RMF3")
-        print(f"{'='*70}")
-        print(f"Input: {hdf5_file}")
-        print(f"Output: {rmf3_file}")
-        print(f"Frames: {n_frames}")
-        print(f"Particles: {n_particles}")
-        print(f"{'='*70}\n")
-    
-    # Create IMP Model
+
+        log_probs = f['log_probabilities'][:] if 'log_probabilities' in f else None
+        radii = f['radii'][:] if 'radii' in f else np.full((n_particles,), radius, dtype=float)
+
+        particle_types = f['particle_types'][:] if 'particle_types' in f else None
+        type_names_attr = f.attrs.get('type_names', None)
+        type_names = None
+        if type_names_attr is not None:
+            try:
+                type_names = {int(k): v for k, v in json.loads(type_names_attr).items()}
+            except Exception:
+                type_names = None
+
+    # Build color lookup per particle
+    if particle_types is not None:
+        def default_palette(i: int) -> IMP.display.Color:
+            palette = [
+                (0.2, 0.6, 1.0),
+                (0.9, 0.4, 0.2),
+                (0.3, 0.8, 0.4),
+                (0.8, 0.6, 0.2),
+                (0.6, 0.4, 0.8),
+                (0.2, 0.8, 0.8),
+            ]
+            r, g, b = palette[i % len(palette)]
+            return IMP.display.Color(r, g, b)
+
+        def color_for_type(tid: int) -> IMP.display.Color:
+            # color_map can be keyed by id or name
+            if color_map is not None:
+                if isinstance(color_map, dict):
+                    if tid in color_map:
+                        r, g, b = color_map[tid]
+                        return IMP.display.Color(float(r), float(g), float(b))
+                    if type_names and tid in type_names and type_names[tid] in color_map:
+                        r, g, b = color_map[type_names[tid]]
+                        return IMP.display.Color(float(r), float(g), float(b))
+            return default_palette(tid)
+
+        particle_colors = [color_for_type(int(t)) for t in particle_types]
+    else:
+        particle_colors = [color for _ in range(n_particles)]
+
+    # Create IMP model/hierarchy
     model = IMP.Model()
-    
-    # Create root hierarchy
     p_root = IMP.Particle(model)
     root_h = IMP.atom.Hierarchy.setup_particle(p_root)
     p_root.set_name("root")
-    
-    # Create particles
+
     particles = []
     for i in range(n_particles):
         p = IMP.Particle(model)
-        p.set_name(f"particle_{i}")
-        
-        # Setup XYZR
+        # Name with type if available
+        if particle_types is not None and type_names is not None:
+            tname = type_names.get(int(particle_types[i]), f"type_{int(particle_types[i])}")
+            pname = f"{tname}_{i}"
+        elif particle_types is not None:
+            pname = f"type{int(particle_types[i])}_{i}"
+        else:
+            pname = f"particle_{i}"
+        p.set_name(pname)
+
         xyzr = IMP.core.XYZR.setup_particle(p)
-        coord = coords[0, i]  # Initial coordinates
-        xyzr.set_coordinates(IMP.algebra.Vector3D(coord[0], coord[1], coord[2]))
-        xyzr.set_radius(radius)
+        coord0 = coords[0, i]
+        xyzr.set_coordinates(IMP.algebra.Vector3D(coord0[0], coord0[1], coord0[2]))
+        xyzr.set_radius(float(radii[i]))
         xyzr.set_coordinates_are_optimized(True)
-        
-        # Setup mass and color
+
         IMP.atom.Mass.setup_particle(p, 1.0)
-        IMP.display.Colored.setup_particle(p, color)
-        
-        # Add to hierarchy
+        IMP.display.Colored.setup_particle(p, particle_colors[i])
+
         h = IMP.atom.Hierarchy.setup_particle(p)
         root_h.add_child(h)
         particles.append(p)
-    
-    # Create RMF file
+
     rmf = RMF.create_rmf_file(rmf3_file)
-    rmf.set_description(f"MCMC trajectory: {n_frames} frames, {n_particles} particles")
-    
-    # Add hierarchy
+    desc = f"Trajectory: {n_frames} frames, {n_particles} particles"
+    if log_probs is not None:
+        desc += f", logp range [{np.min(log_probs):.2f}, {np.max(log_probs):.2f}]"
+    rmf.set_description(desc)
+
     IMP.rmf.add_hierarchy(rmf, root_h)
     IMP.rmf.add_restraints(rmf, [])
-    
-    # Save frames
+
     print("Writing frames...")
     for frame_idx in range(n_frames):
         if frame_idx % 100 == 0:
             print(f"  Frame {frame_idx+1}/{n_frames}")
-        
-        # Update coordinates
+
         for i, p in enumerate(particles):
             coord = coords[frame_idx, i]
             xyzr = IMP.core.XYZR(p)
             xyzr.set_coordinates(IMP.algebra.Vector3D(coord[0], coord[1], coord[2]))
-        
+
         model.update()
         IMP.rmf.save_frame(rmf, f"frame_{frame_idx}")
-    
+
     rmf.close()
     del rmf
-    
+
     print(f"\n{'='*70}")
-    print(f"Conversion complete!")
-    print(f"{'='*70}")
+    print("Conversion complete!")
     print(f"Saved: {rmf3_file}")
-    print(f"\nVisualize with:")
-    print(f"  chimerax {rmf3_file}")
     print(f"{'='*70}")
 
 

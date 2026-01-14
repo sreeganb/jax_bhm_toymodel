@@ -279,3 +279,77 @@ def positions_from_state(state: ParticleState) -> jnp.ndarray:
 def radii_from_state(state: ParticleState) -> jnp.ndarray:
     """Extract radii array (for use in jit-compiled functions)."""
     return state.radii
+
+
+class ParticleSystemFactory:
+    """Small helper to build ParticleState objects from a type spec.
+
+    Expected spec format (matches unified_workflow.py):
+        {
+            "ProteinA": {"count": 5, "radius": 2.0},
+            "ProteinB": {"count": 3, "radius": 3.0},
+            ...
+        }
+    Optional key: "copy_number"; defaults to 1 if omitted.
+    """
+
+    def __init__(self, type_spec: Dict[str, Dict[str, float | int]]):
+        self.type_spec = type_spec
+
+    def create_random_state(self, key: jax.Array, box_size: float = 100.0, center: float = 0.0) -> ParticleState:
+        """Generate uniformly random coordinates in a cube and return ParticleState."""
+        # Build deterministic type ordering for reproducibility
+        type_names_list = sorted(self.type_spec.keys())
+        type_name_to_id = {name: i for i, name in enumerate(type_names_list)}
+
+        positions_list = []
+        radii_list: list[float] = []
+        types_list: list[int] = []
+        copy_numbers_list: list[int] = []
+        names_list: list[str] = []
+
+        half_box = box_size / 2.0
+        # Split key for each type block
+        subkeys = jax.random.split(key, len(type_names_list)) if len(type_names_list) > 0 else []
+
+        for idx, type_name in enumerate(type_names_list):
+            spec = self.type_spec[type_name]
+            count = int(spec.get("count", 0))
+            radius = float(spec.get("radius", 1.0))
+            copy_number = int(spec.get("copy_number", 1))
+
+            if count <= 0:
+                continue
+
+            # Uniform in cube [center-half_box, center+half_box]
+            coords = center + jax.random.uniform(
+                subkeys[idx],
+                shape=(count, 3),
+                minval=-half_box,
+                maxval=half_box,
+                dtype=jnp.float32,
+            )
+
+            positions_list.append(coords)
+            radii_list.extend([radius] * count)
+            types_list.extend([type_name_to_id[type_name]] * count)
+            copy_numbers_list.extend([copy_number] * count)
+            names_list.extend([f"{type_name}_{i}" for i in range(count)])
+
+        if not positions_list:
+            raise ValueError("No particles generated; check type_spec counts.")
+
+        positions = jnp.concatenate(positions_list, axis=0)
+        radii = jnp.array(radii_list, dtype=jnp.float32)
+        particle_types = jnp.array(types_list, dtype=jnp.int32)
+        copy_numbers = jnp.array(copy_numbers_list, dtype=jnp.int32)
+        type_id_to_name = {v: k for k, v in type_name_to_id.items()}
+
+        return ParticleState(
+            positions=positions,
+            radii=radii,
+            particle_types=particle_types,
+            copy_numbers=copy_numbers,
+            names=names_list,
+            type_names=type_id_to_name,
+        )

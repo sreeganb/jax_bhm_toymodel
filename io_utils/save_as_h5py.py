@@ -16,6 +16,49 @@ if TYPE_CHECKING:
     from representation import ParticleState
 
 
+def save_smc_to_hdf5(particles: np.ndarray, log_probs: np.ndarray, filename: str, method: str = "Tempered SMC") -> None:
+    """Save SMC population (flattened or (n,3) coordinates) to HDF5.
+
+    particles: (n_samples, n_particles*3) or (n_samples, n_particles, 3)
+    log_probs: (n_samples,)
+    """
+    particles_np = np.asarray(particles)
+    log_probs_np = np.asarray(log_probs)
+
+    if particles_np.ndim == 2:
+        n_samples = particles_np.shape[0]
+        n_particles = particles_np.shape[1] // 3
+        coords = particles_np.reshape(n_samples, n_particles, 3)
+    elif particles_np.ndim == 3 and particles_np.shape[2] == 3:
+        coords = particles_np
+        n_samples, n_particles, _ = coords.shape
+    else:
+        raise ValueError("particles must be (n_samples, n_particles*3) or (n_samples, n_particles, 3)")
+
+    if log_probs_np.shape[0] != n_samples:
+        raise ValueError("log_probs length must match n_samples")
+
+    best_idx = int(np.argmax(log_probs_np))
+
+    with h5py.File(filename, 'w') as f:
+        f.attrs['creation_date'] = datetime.now().isoformat()
+        f.attrs['n_samples'] = n_samples
+        f.attrs['n_particles'] = n_particles
+        f.attrs['method'] = method
+
+        f.create_dataset('coordinates', data=coords, compression='gzip')
+        f.create_dataset('log_probabilities', data=log_probs_np, compression='gzip')
+
+        best_grp = f.create_group('best_configuration')
+        best_grp.attrs['sample_index'] = best_idx
+        best_grp.attrs['log_probability'] = float(log_probs_np[best_idx])
+        best_grp.create_dataset('coordinates', data=coords[best_idx])
+
+    print(f"Saved to: {filename}")
+    print(f"  Population size: {n_samples}")
+    print(f"  Best log_prob: {float(np.max(log_probs_np)):.2f}")
+
+
 def save_state(filename: str, state: Dict) -> None:
     """Save a generic state dictionary to HDF5."""
     with h5py.File(filename, 'w') as f:
