@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Union, Tuple
 from functools import partial
 
-
 @dataclass
 class ParticleState:
     """

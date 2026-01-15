@@ -4,8 +4,13 @@ Unified Workflow Example: Demonstrating ParticleState throughout all 4 stages.
 This example shows:
 1. Representation: Creating ParticleState with types and radii
 2. Scoring: Using ParticleState directly in scoring functions
-3. Sampling: MCMC sampling with ParticleState
+3. Sampling: SMC sampling with ParticleState
 4. Validation: Saving/loading ParticleState to/from HDF5
+
+Platform compatibility:
+- Linux/Windows with NVIDIA GPU: Full speed with CUDA
+- Linux/Windows CPU: Works with XLA
+- macOS Intel/Apple Silicon: Works on CPU
 """
 import sys
 from pathlib import Path
@@ -20,7 +25,13 @@ from jax import random
 import h5py
 from datetime import datetime
 
-print("JAX is using device:", jax.default_backend())
+# Print device info
+backend = jax.default_backend()
+print(f"JAX backend: {backend}")
+print(f"Platform: {sys.platform}")
+if backend == 'cpu':
+    print("Note: Running on CPU. For GPU acceleration, install jax[cuda]")
+print()
 
 # Now import our modules
 from representation import ParticleState, ParticleSystemFactory
@@ -169,11 +180,11 @@ def log_prob_jit(positions_flat: jnp.ndarray) -> float:
 # Configure SMC sampler
 smc_config = SMCConfig(
     n_particles=500,           # Number of parallel particles (increase for better sampling)
-    n_mcmc_steps=5,            # MCMC steps per SMC iteration
-    mcmc_step_size=2.0,        # Initial step size (will adapt)
+    n_mcmc_steps=5,            # HMC steps per SMC iteration
+    hmc_step_size=0.1,         # HMC leapfrog step size
+    hmc_n_leapfrog=10,         # Number of leapfrog steps per HMC iteration
     target_ess=0.5,            # Target effective sample size ratio
-    max_iterations=100,        # Maximum SMC iterations
-    adaptive_step_size=True,   # Adapt step size based on acceptance
+    max_iterations=1000,       # Maximum SMC iterations
 )
 
 # Initialize particles from current state (with some noise)
@@ -206,7 +217,7 @@ smc_result = run_smc_simple(
 print()
 print(f"SMC Results:")
 print(f"  Iterations: {smc_result.n_iterations}")
-print(f"  Final ESS: {smc_result.ess_history[-1]:.1f}")
+print(f"  Temperature schedule length: {len(smc_result.temperatures)}")
 print(f"  Best log_prob: {jnp.max(smc_result.log_probs):.2f}")
 print(f"  Mean log_prob: {jnp.mean(smc_result.log_probs):.2f}")
 
@@ -219,8 +230,8 @@ trajectory_log_probs = smc_result.log_probs[:n_save]
 best_idx = jnp.argmax(smc_result.log_probs)
 final_positions = smc_result.particles[best_idx]
 
-acceptance_rate = float(jnp.mean(smc_result.acceptance_rates)) if len(smc_result.acceptance_rates) > 0 else 0.0
-print(f"Mean acceptance rate: {acceptance_rate:.2%}")
+print()
+print(f"Best particle (index {best_idx}) log_prob: {smc_result.log_probs[best_idx]:.2f}")
 print()
 
 # ============================================================
@@ -248,8 +259,7 @@ save_particle_state(
     metadata={
         "method": "SMC",
         "n_particles": n_smc_particles,
-        "n_iterations": smc_result.n_iterations,
-        "acceptance_rate": acceptance_rate
+        "n_iterations": smc_result.n_iterations
     }
 )
 

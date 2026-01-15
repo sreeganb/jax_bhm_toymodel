@@ -56,6 +56,14 @@ def get_ideal_coords() -> dict[str, jnp.ndarray]:
         'C': jnp.array(array_C)
     }
 
+
+def get_ideal_radii() -> dict[str, float]:
+    return {
+        'A': 24.0,
+        'B': 14.0,
+        'C': 16.0
+    }
+    
 # Generalized function to generate random coords for arbitrary N_A, N_B, N_C
 def generate_random_coords(
     key: jax.Array,

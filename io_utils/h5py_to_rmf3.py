@@ -1,13 +1,22 @@
 import h5py
 import numpy as np
-import IMP
-import IMP.core
-import IMP.atom
-import IMP.algebra
-import IMP.rmf
-import RMF
 import sys
 import json
+
+# IMP imports - these are optional and only needed for RMF3 conversion
+# On Mac or systems without IMP, this module will still import but
+# convert_simple_mcmc_to_rmf3 will raise an error if called
+try:
+    import IMP
+    import IMP.core
+    import IMP.atom
+    import IMP.algebra
+    import IMP.rmf
+    import RMF
+    IMP_AVAILABLE = True
+except ImportError:
+    IMP_AVAILABLE = False
+    IMP = None
 
 
 def convert_simple_mcmc_to_rmf3(
@@ -33,7 +42,17 @@ def convert_simple_mcmc_to_rmf3(
         radius: fallback scalar radius if /radii missing
         color: fallback IMP.display.Color if no types or color_map provided
         color_map: optional dict mapping type name or type id to RGB tuple (0-1 floats)
+    
+    Raises:
+        ImportError: If IMP is not installed (required for RMF3 conversion)
     """
+    if not IMP_AVAILABLE:
+        raise ImportError(
+            "IMP is not installed. RMF3 conversion requires IMP.\n"
+            "On Linux: conda install -c salilab imp\n"
+            "On Mac: IMP must be installed separately (see https://integrativemodeling.org/download.html)\n"
+            "Note: The rest of the package works without IMP."
+        )
 
     if color is None:
         color = IMP.display.Color(0.2, 0.6, 1.0)  # default blue
@@ -184,16 +203,22 @@ def inspect_hdf5(hdf5_file):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  Convert: python convert_simple_mcmc_to_rmf3.py <input.h5> [output.rmf3]")
-        print("  Inspect: python convert_simple_mcmc_to_rmf3.py --inspect <input.h5>")
+        print("  Convert: python h5py_to_rmf3.py <input.h5> [output.rmf3]")
+        print("  Inspect: python h5py_to_rmf3.py --inspect <input.h5>")
         sys.exit(1)
     
     if sys.argv[1] == "--inspect":
         if len(sys.argv) < 3:
-            print("Usage: python convert_simple_mcmc_to_rmf3.py --inspect <input.h5>")
+            print("Usage: python h5py_to_rmf3.py --inspect <input.h5>")
             sys.exit(1)
         inspect_hdf5(sys.argv[2])
     else:
+        if not IMP_AVAILABLE:
+            print("ERROR: IMP is not installed. RMF3 conversion requires IMP.")
+            print("On Linux: conda install -c salilab imp")
+            print("On Mac: See https://integrativemodeling.org/download.html")
+            print("\nYou can still inspect the HDF5 file with: --inspect")
+            sys.exit(1)
         input_h5 = sys.argv[1]
         output_rmf = sys.argv[2] if len(sys.argv) > 2 else input_h5.replace('.h5', '.rmf3')
         convert_simple_mcmc_to_rmf3(input_h5, output_rmf)
